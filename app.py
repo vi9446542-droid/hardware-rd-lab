@@ -1,200 +1,173 @@
 import streamlit as st
 from google import genai
-from google.genai import types
 import schemdraw
 import schemdraw.elements as elm
 import matplotlib.pyplot as plt
 import io
 import re
 import time
-import math
+import urllib.request
+import json
 
 # పేజీ సెటప్
-st.set_page_config(page_title="Auto Senior Electronics Engineer", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Instant Hardware R&D Studio", page_icon="⚡", layout="wide")
 
-st.title("⚡ Autonomous Senior Electronics Engineer (Zero-Upload)")
-st.markdown("**మీరు ఏ డేటాషీట్ లేదా ఫార్ములా అప్‌లోడ్ చేయాల్సిన పనిలేదు — మీ ఐడియా చెబితే చాలు, లైవ్ వెబ్ డేటాషీట్‌లతో A to Z హార్డ్‌వేర్ డిజైన్ సిద్ధమవుతుంది!**")
+st.title("⚡ Instant Hardware R&D Platform (Ultra-Fast & Zero-503)")
+st.markdown("**Google / WhatsApp లాగా వేగంగా — ఒక్క కాల్ లోనే కాంపోనెంట్లు, ఫార్ములాలు, సర్క్యూట్ బొమ్మ, బ్రెడ్‌బోర్డ్ వైరింగ్ & ESP32 కోడ్!**")
 
-# సైడ్‌బార్: కేవలం API Key మాత్రమే
+# సైడ్‌బార్: API Keys
 with st.sidebar:
-    st.header("🔑 API Setup")
-    api_key = st.text_input("మీ Gemini API Key పేస్ట్ చేయండి:", type="password").strip()
-    st.divider()
-    st.success("✅ **Built-in Engines Active:**\n- Live Web Datasheet Search (Auto)\n- All Electronics Formulas (Built-in)\n- Self-Healing Schematic Drawer\n- Breadboard & ESP32 Code Builder")
+    st.header("🔑 API Configuration")
+    gemini_key = st.text_input("1. Gemini API Key (Primary):", type="password").strip()
+    groq_key = st.text_input("2. Groq API Key (Optional 0.5s Backup - console.groq.com):", type="password").strip()
+    st.caption("💡 Gemini సర్వర్ 503 బిజీగా ఉన్నప్పుడు Groq కీ ఉంటే 0.5 సెకన్లలో ఆటోమేటిక్‌గా పనిచేస్తుంది!")
 
-# మెయిన్ ఇన్‌పుట్ (చాలా సింపుల్ — కేవలం మీ ఐడియా మాత్రమే)
+# మెయిన్ ఇన్‌పుట్
 project_idea = st.text_area(
-    "మీకు ఏ ఎలక్ట్రానిక్ ప్రాజెక్ట్ / సెన్సార్ కావాలో సాధారణ భాషలో రాయండి:",
-    value="Low-cost PPG heart rate and SpO2 sensor circuit using discrete Op-Amps (MCP6002), BPW34 photodiode, 525nm & 660nm LEDs connected to ESP32-C3.",
+    "మీ ఎలక్ట్రానిక్ ప్రాజెక్ట్ ఐడియా రాయండి:",
+    value="Low-cost PPG heart rate sensor circuit using BPW34 photodiode, 525nm green LED, MCP6002 op-amp (Gain 100, 0.5Hz to 40Hz bandpass filter, 1.65V mid-rail bias) for ESP32-C3.",
     height=90
 )
 
 col1, col2 = st.columns(2)
 with col1:
-    mcu_type = st.selectbox("మైక్రోకంట్రోలర్ (Controller):", ["ESP32-C3 (3.3V)", "ESP32 DevKit (3.3V)", "Arduino Uno / Nano (5V)", "RP2040 / Pico (3.3V)"])
+    mcu_type = st.selectbox("Controller:", ["ESP32-C3 (3.3V)", "ESP32 DevKit (3.3V)", "Arduino Uno (5V)", "RP2040 Pico (3.3V)"])
 with col2:
-    budget_pref = st.selectbox("బడ్జెట్ & డిజైన్ రకం:", ["Low-Cost Discrete Components (Under ₹500)", "Standard Prototype (Under ₹1500)", "Medical Grade High-Precision"])
+    budget_pref = st.selectbox("Design Type:", ["Low-Cost Discrete (Under ₹500)", "Standard Prototype (Under ₹1500)"])
 
-# ఇన్‌బిల్ట్ సీనియర్ ఇంజనీర్ నాలెడ్జ్ బేస్ (మీరు టైప్ చేయాల్సిన పనిలేకుండా కోడ్ లోనే ఉంటుంది)
-BUILTIN_ENGINEERING_BRAIN = """
-VERIFIED ELECTRONICS FORMULAS & RULES:
-1. Ohm's Law: V = I * R | LED Resistor: R = (V_supply - V_f) / I_led | Power: P = V * I (Keep resistor power < 125mW for 1/4W).
-2. Voltage Divider & Mid-Rail Bias: V_out = V_in * (R2 / (R1 + R2)). For 3.3V single-supply Op-Amp, create 1.65V bias using two equal 10kΩ/100kΩ 1% resistors + 10µF bypass capacitor to GND.
-3. RC Low-Pass / High-Pass Filter: fc = 1 / (2 * pi * R * C). (For PPG/ECG: High-pass fc = 0.5Hz to remove DC drift; Low-pass fc = 40Hz to block 50Hz AC powerline hum).
-4. Non-Inverting Op-Amp Gain: Av = 1 + (Rf / Rin). Output V_out = V_in * Av (Must stay within 0.1V to 3.2V to prevent rail saturation).
-5. Transimpedance Amplifier (TIA) for Photodiode: V_out = V_bias + (I_photo * Rf), Feedback capacitor Cf = 1 / (2 * pi * Rf * fc) for stability.
-6. Instrumentation Amplifier (3-Op-Amp INA for ECG/Bio-Z/EDA): V_out = (V+ - V-) * (1 + 2*R1 / R_gain).
-7. Decoupling Rule: Always place 100nF (0.1µF) ceramic capacitor within 2mm of every IC VDD-GND pin pair.
-8. ADC Conversion: V_mv = (ADC_raw / (2^bits - 1)) * V_ref_mv.
+# ఇన్‌బిల్ట్ ఫార్ములాలు
+BUILTIN_RULES = """
+FORMULAS: LED R=(Vs-Vf)/I | 1.65V Bias: two equal 10kΩ/100kΩ + 10µF cap | RC Filter: fc=1/(2*pi*R*C) | Non-Inverting Gain: Av=1+(Rf/Rin) | TIA: Vout=Vbias+(I*Rf), Cf=1/(2*pi*Rf*fc) | Decoupling: 100nF near VDD-GND.
 """
 
-# Helper Function: Live Web Search Grounding + Auto-Retry
-def ask_senior_engineer(client, prompt, use_web_search=True):
-    models_to_try = ["gemini-3.8-flash"]
-    try:
-        for m in client.models.list():
-            m_name = m.name.replace("models/", "")
-            if ("flash" in m_name or "lite" in m_name) and m_name not in models_to_try:
-                models_to_try.append(m_name)
-    except Exception:
-        pass
+# Fast Groq Fallback Caller (Standard Python urllib — no extra library needed!)
+def call_groq_backup(api_key, prompt):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+    data = json.dumps({
+        "model": "llama-3.3-70b-versatile",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        res_json = json.loads(resp.read().decode("utf-8"))
+        return res_json["choices"][0]["message"]["content"]
 
-    config = None
-    if use_web_search:
-        config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())]
-        )
+# Single-Call Ultra-Fast Engine
+def run_instant_engine(gem_key, grq_key, prompt):
+    if gem_key:
+        client = genai.Client(api_key=gem_key)
+        # అందుబాటులో ఉన్న అన్ని ఫాస్ట్ మోడల్స్ లిస్ట్ తీసుకుంటుంది
+        models = ["gemini-3.8-flash"]
+        try:
+            for m in client.models.list():
+                name = m.name.replace("models/", "")
+                if ("flash" in name or "lite" in name) and name not in models:
+                    models.append(name)
+        except Exception:
+            pass
 
-    last_error = ""
-    for model_name in models_to_try:
-        for attempt in range(2):
+        for m_name in models:
             try:
-                if config:
-                    response = client.models.generate_content(model=model_name, contents=prompt, config=config)
-                else:
-                    response = client.models.generate_content(model=model_name, contents=prompt)
-                return response.text
+                resp = client.models.generate_content(model=m_name, contents=prompt)
+                return resp.text, f"Gemini ({m_name})"
             except Exception as e:
-                last_error = str(e)
-                if "503" in last_error or "UNAVAILABLE" in last_error or "429" in last_error:
-                    time.sleep(3)
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
+                    time.sleep(1.5)
                     continue
-                elif use_web_search:
-                    # ఒకవేళ ఫ్రీ కీలో search grounding సపోర్ట్ చేయకపోతే సాధారణ మోడ్ లో నడుస్తుంది
-                    try:
-                        response = client.models.generate_content(model=model_name, contents=prompt)
-                        return response.text
-                    except Exception as e2:
-                        last_error = str(e2)
                 break
-    st.error(f"⚠️ సర్వర్ తాత్కాలికంగా బిజీగా ఉంది. 30 సెకన్ల తర్వాత మళ్ళీ ప్రయత్నించండి. ({last_error})")
-    st.stop()
 
-def extract_python_code(text):
-    match = re.search(r"```python\n(.*?)\n```", text, re.DOTALL)
-    return match.group(1) if match else text.replace("```python", "").replace("```", "").strip()
+    # Gemini 503 బిజీగా ఉంటే వెంటనే Groq Backup నడుస్తుంది
+    if grq_key:
+        try:
+            text = call_groq_backup(grq_key, prompt)
+            return text, "Groq Instant Backup (Llama-3.3-70B)"
+        except Exception as e:
+            st.error(f"Backup Error: {e}")
+
+    st.error("⚠️ ప్రస్తుతం Gemini సర్వర్ తాత్కాలికంగా రద్దీగా ఉంది (503). వెంటనే 0.5 సెకన్లలో పనిచేయడానికి ఎడమవైపు సైడ్‌బార్‌లో ఉచిత Groq API Key (console.groq.com) ఇవ్వండి లేదా 30 సెకన్ల తర్వాత మళ్ళీ నొక్కండి.")
+    st.stop()
 
 def sanitize_schemdraw(code):
     for bad in ["elm.Output()", "elm.Input()", "elm.Terminal()", "elm.Port()"]:
         code = code.replace(bad, "elm.Dot()")
-    code = code.replace("d.draw()", "").replace("plt.show()", "")
-    return code
+    return code.replace("d.draw()", "").replace("plt.show()", "").strip()
 
-# బటన్ క్లిక్ చేయగానే మొత్తం End-to-End డిజైన్ ఆటోమేటిక్ గా వస్తుంది
-if st.button("🚀 Build Complete End-to-End Hardware Design", type="primary"):
-    if not api_key:
-        st.error("⚠️ దయచేసి ఎడమవైపు సైడ్‌బార్‌లో మీ Gemini API Key ఇవ్వండి.")
+if st.button("⚡ Build Complete Design Instantly", type="primary"):
+    if not gemini_key and not groq_key:
+        st.error("⚠️ దయచేసి సైడ్‌బార్‌లో Gemini API Key (లేదా Groq API Key) ఇవ్వండి.")
     else:
-        client = genai.Client(api_key=api_key)
+        with st.spinner("⚡ ఒక్క కాల్ లోనే A to Z డిజైన్, సర్క్యూట్ బొమ్మ & కోడ్ సిద్ధమవుతున్నాయి..."):
+            single_shot_prompt = f"""
+            You are a Principal Electronics Hardware Engineer. The user is a beginner.
+            {BUILTIN_RULES}
+            Project: {project_idea} | MCU: {mcu_type} | Budget: {budget_pref}
 
-        with st.spinner("🔍 ఇంటర్నెట్ నుండి అసలు కాంపోనెంట్ డేటాషీట్‌లు తెచ్చి, పూర్తి సర్క్యూట్, లెక్కలు & కోడ్ తయారు చేస్తోంది..."):
-            eng_prompt = f"""
-            You are a Principal Electronics & Biomedical Hardware Engineer. The user is a beginner who does NOT know electronics formulas or datasheets.
-            Automatically search and verify real datasheet pinouts, operating voltages, and component specs for the project below, and apply the built-in engineering rules.
+            Generate the COMPLETE End-to-End output in ONE response using these exact 5 markers:
 
-            {BUILTIN_ENGINEERING_BRAIN}
+            ===TAB1===
+            (In simple Telugu with English tech terms: 1. How it works, 2. BOM Table with Component, Exact Part/Value, Qty, Role, Price in ₹, 3. Verified Datasheet Pinout Table for every IC/Sensor.)
 
-            USER PROJECT: {project_idea}
-            TARGET CONTROLLER: {mcu_type}
-            BUDGET LEVEL: {budget_pref}
+            ===TAB2===
+            (In Telugu: Step-by-step math calculations for every resistor, capacitor, Gain, Cut-off frequency Hz, and LED current + 50Hz noise & saturation safety.)
 
-            Output the complete End-to-End solution strictly divided into these 4 exact markers:
+            ===TAB3===
+            (Write ONLY valid Python `schemdraw` code inside ```python ... ``` to draw the circuit schematic. Rules: `d = schemdraw.Drawing(show=False)`, use ONLY `elm.Resistor()`, `elm.Capacitor()`, `elm.Opamp()`, `elm.Ground()`, `elm.Vdd()`, `elm.Dot()`, `elm.Line()`, `elm.LED()`, `elm.Diode()`, `elm.SourceV()`. Never use `elm.Output()`. Save to `buf`:
+            buf = io.BytesIO()
+            d.save(buf, format='png', dpi=300)
+            buf.seek(0)
+            )
 
-            ===PART_1===
-            (In clear, simple Telugu with English technical terms:
-            1. **ఇది ఎలా పనిచేస్తుంది (Simple Explanation):** అసలు ఈ సర్క్యూట్ లాజిక్ ఏమిటి?
-            2. **కాంపోనెంట్ల లిస్ట్ & ధరలు (Auto-Verified BOM Table):** Component Name, Exact Part Number, Value, Quantity, Role, Approx Indian Price (₹).
-            3. **అసలు Datasheet పిన్ వివరాలు (Verified Pinout Table):** ప్రతి IC మరియు సెన్సార్ యొక్క ప్రతి పిన్ నంబర్ (Pin 1, Pin 2...) ఏమిటో డేటాషీట్ ప్రకారం కచ్చితంగా రాయండి.)
+            ===TAB4===
+            (In Telugu: Step-by-step Breadboard Pin-to-Pin Wiring Guide, Multimeter voltage check before connecting MCU, and LTspice .cir netlist.)
 
-            ===PART_2===
-            (In clear Telugu:
-            1. **ఆటోమేటిక్ ఇంజనీరింగ్ లెక్కలు (Step-by-Step Math):** పైన ఎంచుకున్న రెసిస్టర్లు, కెపాసిటర్ల విలువలు ఎందుకు పెట్టామో Gain, Cut-off Frequency (Hz), LED Current ఫార్ములాలతో సహా విడమరిచి చూపండి.
-            2. **సేఫ్టీ & నాయిస్ చెక్:** 50Hz కరెంట్ హమ్ మరియు సిగ్నల్ కట్ (Saturation) అవ్వకుండా ఎలా కాపాడామో వివరించండి.)
-
-            ===PART_3===
-            (In clear Telugu:
-            1. **బ్రెడ్‌బోర్డ్ వైరింగ్ గైడ్ (Zero-Mistake Pin-to-Pin):** ఒక చిన్న పిల్లవాడికి కూడా అర్థమయ్యేలా 'ఈ పిన్ నుండి ఆ పిన్‌కు వైరు కలపండి' అని వరుసగా స్టెప్స్ రాయండి.
-            2. **మల్టీమీటర్ టెస్ట్ (Multimeter Check):** బోర్డు ఆన్ చేశాక ఏ పిన్ దగ్గర ఎన్ని వోల్ట్లు (V) రావాలో చెప్పండి.
-            3. **LTspice Simulation Code (.cir):** సర్క్యూట్ నిజమా కాదా చెక్ చేసుకోవడానికి SPICE నెట్‌లిస్ట్ ఇవ్వండి.)
-
-            ===PART_4===
-            (Complete, copy-paste ready Arduino C++ code for {mcu_type} with exact pin definitions, 12-bit/10-bit ADC to mV conversion, digital noise filter, and Serial Plotter output + Telugu లో కోడ్ ఎలా అప్‌లోడ్ చేసి గ్రాఫ్ చూడాలో గైడ్.)
+            ===TAB5===
+            (Complete non-blocking Arduino C++ code using micros() for {mcu_type} with ADC to mV conversion, 1650mV offset removal, digital filter, Serial Plotter output + Telugu upload guide.)
             """
-            full_output = ask_senior_engineer(client, eng_prompt, use_web_search=True)
+            raw_out, engine_used = run_instant_engine(gemini_key, groq_key, single_shot_prompt)
+            st.toast(f"✅ పూర్తయింది! Engine: {engine_used}")
 
-        p1 = full_output.split("===PART_2===")[0].replace("===PART_1===", "").strip() if "===PART_2===" in full_output else full_output
-        p2 = full_output.split("===PART_2===")[1].split("===PART_3===")[0].strip() if "===PART_3===" in full_output else ""
-        p3 = full_output.split("===PART_3===")[1].split("===PART_4===")[0].strip() if "===PART_4===" in full_output else ""
-        p4 = full_output.split("===PART_4===")[1].strip() if "===PART_4===" in full_output else ""
+        def get_part(text, start_m, end_m=None):
+            if start_m not in text: return ""
+            sub = text.split(start_m)[1]
+            return sub.split(end_m)[0].strip() if (end_m and end_m in sub) else sub.strip()
+
+        t1_txt = get_part(raw_out, "===TAB1===", "===TAB2===")
+        t2_txt = get_part(raw_out, "===TAB2===", "===TAB3===")
+        t3_raw = get_part(raw_out, "===TAB3===", "===TAB4===")
+        t4_txt = get_part(raw_out, "===TAB4===", "===TAB5===")
+        t5_txt = get_part(raw_out, "===TAB5===")
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "1️⃣ కాంపోనెంట్లు & Datasheet పిన్స్",
             "2️⃣ ఫార్ములాలు & లెక్కలు",
-            "3️⃣ Circuit Schematic (సర్క్యూట్ బొమ్మ)",
+            "3️⃣ Circuit Schematic (బొమ్మ)",
             "4️⃣ Breadboard వైరింగ్ & టెస్ట్",
             "5️⃣ ESP32 / Arduino కోడ్"
         ])
 
-        with tab1: st.markdown(p1)
-        with tab2: st.markdown(p2)
-        with tab4: st.markdown(p3)
-        with tab5: st.markdown(p4)
+        with tab1: st.markdown(t1_txt)
+        with tab2: st.markdown(t2_txt)
+        with tab4: st.markdown(t4_txt)
+        with tab5: st.markdown(t5_txt)
 
-        # --- TAB 3: AUTO SCHEMATIC DIAGRAM ---
         with tab3:
-            with st.spinner("🎨 అసలైన Circuit Schematic బొమ్మ గీస్తోంది..."):
-                sch_prompt = f"""
-                Write ONLY valid Python code using `schemdraw` to draw a clean, left-to-right electronic circuit schematic for:
-                {project_idea}
-
-                STRICT RULES:
-                1. Import `schemdraw`, `schemdraw.elements as elm`, `io`.
-                2. `d = schemdraw.Drawing(show=False)`
-                3. ONLY use these elements: `elm.Resistor()`, `elm.Capacitor()`, `elm.Opamp()`, `elm.Ground()`, `elm.Vdd()`, `elm.Dot()`, `elm.Line()`, `elm.Diode()`, `elm.LED()`, `elm.SourceV()`.
-                4. NEVER use `elm.Output()`, `elm.Input()`, or `elm.Terminal()` — use `elm.Dot().label('Vout')`.
-                5. Save to `buf`:
-                   buf = io.BytesIO()
-                   d.save(buf, format='png', dpi=300)
-                   buf.seek(0)
-                6. Output ONLY ```python ... ``` code.
-                """
-                raw_sch = ask_senior_engineer(client, sch_prompt, use_web_search=False)
-                py_code = sanitize_schemdraw(extract_python_code(raw_sch))
-
-                drawn = False
-                for _ in range(2):
-                    try:
-                        env = {"schemdraw": schemdraw, "elm": elm, "plt": plt, "io": io}
-                        exec(py_code, env)
-                        if "buf" in env:
-                            st.image(env["buf"], caption="Auto-Generated Circuit Schematic Diagram", use_container_width=True)
-                            st.download_button("⬇️ Schematic బొమ్మ డౌన్‌లోడ్ (PNG)", data=env["buf"], file_name="circuit_diagram.png", mime="image/png")
-                            drawn = True
-                            break
-                    except Exception as err:
-                        fix_p = f"Fix this schemdraw Python error: '{err}'. Use ONLY Resistor, Capacitor, Opamp, Ground, Vdd, Dot, Line, LED, Diode. Return ONLY ```python``` code:\n{py_code}"
-                        py_code = sanitize_schemdraw(extract_python_code(ask_senior_engineer(client, fix_p, use_web_search=False)))
-
-                if not drawn:
-                    st.warning("Schematic బొమ్మ గీయడంలో చిన్న ఇబ్బంది వచ్చింది. కింద కోడ్ ఉంది:")
+            match = re.search(r"```python\n(.*?)\n```", t3_raw, re.DOTALL)
+            py_code = sanitize_schemdraw(match.group(1) if match else t3_raw.replace("```python", "").replace("```", ""))
+            try:
+                env = {"schemdraw": schemdraw, "elm": elm, "plt": plt, "io": io}
+                exec(py_code, env)
+                if "buf" in env:
+                    st.image(env["buf"], caption="Circuit Schematic Diagram", use_container_width=True)
+                    st.download_button("⬇️ బొమ్మ డౌన్‌లోడ్ (PNG)", data=env["buf"], file_name="schematic.png", mime="image/png")
+                else:
                     st.code(py_code, language="python")
+            except Exception as err:
+                st.warning(f"Schematic గీయడంలో చిన్న సింటాక్స్ మార్పు అవసరం ({err}). కోడ్ కింద ఉంది:")
+                st.code(py_code, language="python")
