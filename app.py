@@ -45,7 +45,7 @@ project_prompt = st.text_area(
 # Helper Function: Gemini Call
 def ask_gemini(client, prompt):
     response = client.models.generate_content(
-        model="gemini-3.8-5-flash",
+        model="gemini-3.8-flash",
         contents=prompt
     )
     return response.text
